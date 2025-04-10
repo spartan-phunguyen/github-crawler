@@ -132,20 +132,21 @@ class RestAPICommentCrawler:
             return result
 
         for comment in pr_data["comments"]:
-            user = comment.get("user", {}).get("login")
+            author = comment.get("user", {}).get("login")
 
             # Check if None
-            if user is None:
+            if author is None:
                 logging.error(f"Comment has no user information: {comment}")
                 continue
 
             # Only keep comments by the specified user
-            if user.lower() != username.lower():
+            if author.lower() != username.lower():
                 continue
 
-            body = comment.get("body")
-            if not body:
-                logging.error(f"Comment has empty body: {comment}")
+            comment_text = comment.get("body", "")
+            
+            # Validate the comment before adding
+            if not self.is_valid_comment(comment_text):
                 continue
 
             path = comment.get("path")
@@ -165,11 +166,11 @@ class RestAPICommentCrawler:
                     "pr_number": pr_data["pr_number"],
                     "pr_title": pr_data["pr_title"],
                     "file_path": path,
-                    "position": position,
-                    "comment": body,
+                    # "position": position,
+                    "comment": comment_text,
                     "diff_context": context,
-                    "created_at": comment.get("created_at"),
-                    "updated_at": comment.get("updated_at"),
+                    # "created_at": comment.get("created_at"),
+                    # "updated_at": comment.get("updated_at"),
                     "comment_url": comment.get("html_url"),
                 }
             )
@@ -254,9 +255,10 @@ class RestAPICommentCrawler:
                         comments = self.get_comment_with_context(pr_data, username)
 
                         for comment in comments:
-                            all_comments.append(comment)
-                            if len(all_comments) <= limit:  # Only update progress for comments within limit
-                                pbar.update(1)
+                            if self.is_valid_comment(comment["comment"]):
+                                all_comments.append(comment)
+                                if len(all_comments) <= limit:  # Only update progress for comments within limit
+                                    pbar.update(1)
 
                         # Sleep to avoid hitting rate limits
                         time.sleep(0.5)
@@ -298,6 +300,56 @@ class RestAPICommentCrawler:
                 logging.warning("No comments were collected")
 
             return all_comments
+
+    def is_valid_comment(self, comment_text):
+        """
+        Check if a comment is valid for collection.
+        
+        Criteria:
+        - Not blank or only whitespace
+        - Not too short (at least 10 characters)
+        - Appears to be in English (heuristic check)
+        
+        Args:
+            comment_text (str): The comment text to validate
+            
+        Returns:
+            bool: True if the comment is valid, False otherwise
+        """
+        if not comment_text or not comment_text.strip():
+            logging.debug("Skipping blank comment")
+            return False
+            
+        # Skip very short comments
+        if len(comment_text.strip()) < 10:
+            logging.debug(f"Skipping short comment: {comment_text.strip()}")
+            return False
+            
+        # Simple heuristic to check if comment is likely in English
+        # Count English alphabet characters vs. total non-whitespace characters
+        text = comment_text.strip()
+        alpha_count = sum(c.isalpha() and c.isascii() for c in text)
+        non_space_count = sum(not c.isspace() for c in text)
+        
+        if non_space_count == 0:
+            return False
+            
+        # If less than 40% of characters are English alphabet letters, likely not English
+        english_ratio = alpha_count / non_space_count
+        if english_ratio < 0.4:
+            logging.debug(f"Skipping likely non-English comment (ratio: {english_ratio:.2f})")
+            return False
+            
+        # Additional check for common English words
+        # common_words = ['the', 'a', 'an', 'and', 'or', 'but', 'if', 'this', 'that', 'is', 'are', 
+        #                  'it', 'to', 'in', 'for', 'with', 'on', 'as', 'by', 'at', 'from']
+        
+        # words = set(text.lower().split())
+        # if not any(word in words for word in common_words) and len(words) > 5:
+        #     logging.debug("Comment lacks common English words, might not be English")
+        #     return False
+            
+        return True
 
 
 # For backward compatibility

@@ -19,11 +19,12 @@ The system follows a comprehensive data processing workflow:
 ## Key Features
 
 - **Multi-step Pipeline Architecture**: Complete workflow from expert discovery to searchable embeddings
-- **Parallel Processing**: Efficiently processes multiple experts simultaneously 
+- **Parallel Processing**: Efficiently processes multiple experts simultaneously
 - **Configurable Settings**: Customize processing parameters via environment variables
 - **Persistent Storage**: Saves data at each step for resume capability and analysis
 - **Comprehensive Logging**: Detailed progress tracking and error handling
 - **Task Management**: Controls concurrency to avoid API rate limits
+- **Dual API Support**: Uses either GitHub's GraphQL API or REST API for data collection
 
 ## Key Advantages
 
@@ -73,11 +74,29 @@ The system follows a comprehensive data processing workflow:
 
 ## Usage
 
+### Running the Pipeline for a Single Language
+
 Run the complete pipeline with settings from your `.env` file:
 
 ```
 python pipeline.py
 ```
+
+### Running the Pipeline for Multiple Languages
+
+Use the bash script to run the pipeline for multiple languages in sequence:
+
+```
+chmod -R +x run_pipeline.sh
+./run_pipeline.sh
+```
+
+Available parameters:
+
+- `--languages`: Comma-separated list of languages (default: several popular languages)
+- `--max-experts`: Maximum number of experts per language (default: 10)
+- `--comment-limit`: Maximum number of comments per expert (default: 100)
+- `--env-file`: Path to .env file (default: ".env")
 
 ### Using Specific Expert Lists
 
@@ -88,17 +107,17 @@ You can specify experts to process in two ways:
    EXPERT_USERNAMES=torvalds,antirez,gaearon
    ```
 
-2. Provide a file with usernames:
+2. Provide a file with usernames (one per line or JSON format):
    ```
-   EXPERT_LIST_FILE=experts.txt
+   EXPERT_LIST_FILE=experts.json
    ```
 
 ## Components
 
 The pipeline uses several specialized components:
 
-1. **GitHubExpertFinder**: Identifies top users in a programming language
-2. **GitHubCommentCrawler**: Collects comments from GitHub users
+1. **GitHubExpertFinder**: Identifies top users in a programming language (supports both REST API and GraphQL)
+2. **GitHubCommentCrawler**: Collects comments from GitHub users (supports both REST API and GraphQL)
 3. **CommentEnricher**: Uses OpenAI to analyze and classify comments
 4. **CommentEmbedder**: Creates vector embeddings and uploads to Qdrant
 
@@ -111,10 +130,20 @@ The pipeline generates several outputs in the data directory:
 - `{username}_comments.enriched.json`: Enriched comments with classifications
 - `{language}_pipeline_results.json`: Pipeline execution summary
 
+## Troubleshooting
+
+If you encounter API rate limit errors:
+
+- Reduce `MAX_CONCURRENT_TASKS` in the `.env` file
+- Increase the sleep time between languages in the `run_pipeline.sh` script
+- Make sure you're using a GitHub token with appropriate scopes
+- Try using `USE_REST_API=true` to use GitHub's REST API which may have different rate limits
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
+This project is licensed under the MIT License - see the LICENSE file for details.
+

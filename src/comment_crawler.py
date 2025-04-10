@@ -161,17 +161,25 @@ class GitHubCommentCrawler:
                                     if comment_url in state["processed_comments"] and not get_all_historical:
                                         continue
                                     
+                                    # Get the comment body
+                                    comment_body = comment.get("body", "")
+                                    
+                                    # Check if comment is valid (not too short, in English, etc.)
+                                    if not self.is_valid_comment(comment_body):
+                                        logger.debug(f"Skipping invalid comment from {username}")
+                                        continue
+                                    
                                     new_comment = {
                                         "repo": f"{owner}/{repo}",
                                         "pr_number": pr_number,
                                         "pr_title": pr_title,
                                         "file_path": comment.get("path"),
-                                        "position": comment.get("position"),
-                                        "comment": comment.get("body"),
+                                        # "position": comment.get("position"),
+                                        "comment": comment_body,
                                         "diff_context": comment.get("diffHunk"),
-                                        "created_at": comment.get("createdAt"),
-                                        "updated_at": comment.get("updatedAt"),
-                                        "comment_url": comment_url,
+                                        # "created_at": comment.get("createdAt"),
+                                        # "updated_at": comment.get("updatedAt"),
+                                        # "comment_url": comment_url,
                                     }
                                     
                                     all_comments.append(new_comment)
@@ -224,6 +232,56 @@ class GitHubCommentCrawler:
                 # For other errors, re-raise
                 logger.error(f"Error collecting comments for {username}: {e}")
                 raise
+
+    def is_valid_comment(self, comment_text):
+        """
+        Check if a comment is valid for collection.
+        
+        Criteria:
+        - Not blank or only whitespace
+        - Not too short (at least 10 characters)
+        - Appears to be in English (heuristic check)
+        
+        Args:
+            comment_text (str): The comment text to validate
+            
+        Returns:
+            bool: True if the comment is valid, False otherwise
+        """
+        if not comment_text or not comment_text.strip():
+            logger.debug("Skipping blank comment")
+            return False
+            
+        # Skip very short comments
+        if len(comment_text.strip()) < 10:
+            logger.debug(f"Skipping short comment: {comment_text.strip()}")
+            return False
+            
+        # Simple heuristic to check if comment is likely in English
+        # Count English alphabet characters vs. total non-whitespace characters
+        text = comment_text.strip()
+        alpha_count = sum(c.isalpha() and c.isascii() for c in text)
+        non_space_count = sum(not c.isspace() for c in text)
+        
+        if non_space_count == 0:
+            return False
+            
+        # If less than 40% of characters are English alphabet letters, likely not English
+        english_ratio = alpha_count / non_space_count
+        if english_ratio < 0.4:
+            logger.debug(f"Skipping likely non-English comment (ratio: {english_ratio:.2f})")
+            return False
+            
+        # Additional check for common English words
+        # common_words = ['the', 'a', 'an', 'and', 'or', 'but', 'if', 'this', 'that', 'is', 'are', 
+        #                  'it', 'to', 'in', 'for', 'with', 'on', 'as', 'by', 'at', 'from']
+        
+        # words = set(text.lower().split())
+        # if not any(word in words for word in common_words) and len(words) > 5:
+        #     logger.debug("Comment lacks common English words, might not be English")
+        #     return False
+            
+        return True
 
 # Add command-line functionality when run directly
 if __name__ == "__main__":
