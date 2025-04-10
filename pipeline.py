@@ -20,10 +20,10 @@ from typing import List, Dict, Any, Optional, Set
 # Import dotenv for .env file support
 from dotenv import load_dotenv
 
-from expert_finder import GitHubExpertFinder
-from comment_crawler import GitHubCommentCrawler
-from comment_enricher import CommentEnricher
-from embedding_importer import CommentEmbedder
+from src.expert_finder import GitHubExpertFinder
+from src.comment_crawler import GitHubCommentCrawler
+from src.comment_enricher import CommentEnricher
+from src.embedding_importer import CommentEmbedder
 
 # Load environment variables from .env file
 load_dotenv()
@@ -62,6 +62,7 @@ class GitHubDataPipeline:
         self.qdrant_key = qdrant_key or os.getenv("QDRANT_API_KEY")
         self.openai_model = openai_model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         self.embedding_model = embedding_model or os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+        self.use_rest_api = os.getenv("USE_REST_API", "false").lower() == "true"
 
         # Validate required keys
         if not self.github_token:
@@ -118,7 +119,8 @@ class GitHubDataPipeline:
         experts = await asyncio.to_thread(
             self.expert_finder.find_experts,
             language=language,
-            max_users=max_experts
+            max_users=max_experts,
+            use_rest_api=self.use_rest_api
         )
         
         # Save expert list
@@ -160,7 +162,8 @@ class GitHubDataPipeline:
             limit=comment_limit,
             output_file=output_file,
             continue_crawl=continue_crawl,
-            get_all_historical=get_all_historical
+            get_all_historical=get_all_historical,
+            use_rest_api=self.use_rest_api
         )
         
         if not comments:

@@ -16,8 +16,6 @@ The system follows a comprehensive data processing workflow:
 4. **Vector Embedding**: Creates searchable embeddings and stores them in Qdrant vector database
 5. **Parallel Processing**: Handles multiple experts concurrently with controlled task management
 
-![Pipeline Flow](https://mermaid.ink/img/pako:eNp1kc1uwjAQhF9l5TNU4sgVToUDB6BCLdDCpRdnY2ilxo7sNVJReHcdB6jKj280M_uxs_QEuVZIEMJO1YWRlZ7MtSFN96aw5Uotjdob-aW0w0-8vqhFFZJ-NEYdK0F35S7X5mAuSHBndl-HfAMn-xxC5_1sSbP5Kn7bwPQPeOQ8YmE_YpTBFIaC08MQBrPxmI9FMOXBrNeP-XzEgA2mfBL0Md-mYZ7uA_dYmFzwLPOMvcg3jtG1UoUqTcvgvcLOdoNx3DkfllqbXvMtJu-3kfwEcVfbhqxGqnApyPYEL1jVpsH75xQJKmkKtNRKZ9bsseUXlddK0iMqSTjlOgej61yRo_OGdv6tCmGkXv6_sObY4i-EqL89SVZqhwRaqDJmLdPyOg5IvtxpJOj8wivOF5xKgqoQspB5eTTJF-7U3WQ?type=png)
-
 ## Key Features
 
 - **Multi-step Pipeline Architecture**: Complete workflow from expert discovery to searchable embeddings
