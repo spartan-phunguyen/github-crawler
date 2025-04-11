@@ -7,15 +7,7 @@ This script automates the entire process:
 2. Collect comments from those experts
 3. Enrich comments with classifications
 4. Create embeddings and import to Qdrant
-"""
-
-import os
-import logging
-import asyncio
-import json
-from datetime import datetime
-from pathlib import Path
-from typing import List, Dict, Any, Optional, Set
+""
 
 # Import dotenv for .env file support
 from dotenv import load_dotenv

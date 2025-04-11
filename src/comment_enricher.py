@@ -1,22 +1,7 @@
-import os
-import sys
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-import os
-import json
-import time
-import logging
-import argparse
-from pathlib import Path
-from openai import OpenAI
-
-# Setup logging
-logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-class CommentEnricher:
-    """GitHub comment classifier using OpenAI API."""
+""GitHub comment classifier using OpenAI API."""
     
     def __init__(self, api_key=None, model="gpt-4o-mini", rate_limit_delay=0.5):
         """
