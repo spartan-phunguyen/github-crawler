@@ -123,8 +123,9 @@ class GitHubExpertFinder:
                 round = 0
                 while fetched < max_users:
                     print(f"Round {round}")
-                    #query_string = f"language:{language} followers:>1000 repos:>50"
-                    query_string = f"language:{language}"
+                    # query_string = f"language:{language} followers:>1000 repos:>50"
+                    # query_string = f"language:{language}"
+                    query_string = f"{language}"
                     variables = {"queryString": query_string, "after": after_cursor}
                     
                     data = self.api.graphql_query(query, variables)
@@ -182,6 +183,9 @@ class GitHubExpertFinder:
                         
                     after_cursor = data['data']['search']['pageInfo']['endCursor']
                     round += 1
+
+                    if round >= int(os.getenv("MAX_ROUND")):
+                        break
                 
                 # If we got here without exceptions, we're done
                 return sorted(results, key=lambda x: x['score'], reverse=True)
@@ -242,15 +246,15 @@ class GitHubExpertFinder:
         
         stars = sum(repo['stargazerCount'] for repo in repos)
 
-        if pr_review_count < 10:
-            return {
-            "login": login,
-            "score": 0,
-            "followers": followers,
-            "stars": stars,
-            "prs": pr_count,
-            "pr_reviews": pr_review_count
-            }
+        # if pr_review_count < 10:
+        #     return {
+        #     "login": login,
+        #     "score": 0,
+        #     "followers": followers,
+        #     "stars": stars,
+        #     "prs": pr_count,
+        #     "pr_reviews": pr_review_count
+        #     }
         
         # Scoring formula - now includes pr_review_count
         weights = {'followers': 1, 'stars': 2, 'prs': 3, 'pr_reviews': 4}

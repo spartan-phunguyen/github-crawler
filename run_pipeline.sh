@@ -8,7 +8,52 @@ set -e  # Exit on error
 MAX_EXPERTS=10
 COMMENT_LIMIT=100
 ENV_FILE=".env"
-LANGUAGES=("CSS")
+LANGUAGES=(
+  # Application Domains
+  # "android"
+  # "ios"
+  # "web"
+  # "backend"
+  # "frontend"
+  # "voip"
+  # "iot"
+  # "blockchain"
+  # "database"
+  # "security"
+  # "gaming"
+  # "arvr"
+  # "desktop"
+  # "api"
+
+  # Infra / Deployment Types
+  "cloud"
+  "onprem"
+  "edge"
+  "serverless"
+  "microservices"
+  "monolith"
+
+  # Deployment / DevOps Tools
+  "docker"
+  "k8s"
+  "helm"
+  "ansible"
+  "terraform"
+  "jenkins"
+  "gitlab-ci"
+  "argo"
+  "packer"
+  "vagrant"
+  "prometheus"
+  "grafana"
+  "flux"
+  "tekton"
+  "nomad"
+  "consul"
+  "vault"
+  "cloudformation"
+  "spinnaker"
+)
 
 #"PHP" "Swift" "JavaScript" "Rust" "Go" "C#" "Ruby" "Kotlin" "Scala" "R" "SQL" "HTML" "CSS" "Java" "C++" "C"
 

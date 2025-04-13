@@ -144,12 +144,66 @@ class GitHubDataPipeline:
     def get_expert_dir(self, language: str, username: str) -> str:
         """Get the directory path for a specific expert within a language."""
         return os.path.join(self.get_language_dir(language), "experts", username)
+    
+    def get_experts_file_path(self, language: str) -> str:
+        """Get the path to the experts.json file for a specific language."""
+        return os.path.join(self.get_language_dir(language), "experts.json")
         
     def setup_language_dirs(self, language: str) -> None:
         """Create the directory structure for a language."""
         language_dir = self.get_language_dir(language)
         experts_dir = os.path.join(language_dir, "experts")
         os.makedirs(experts_dir, exist_ok=True)
+    
+    def get_existing_experts(self, language: str) -> Dict[str, Dict[str, Any]]:
+        """
+        Get existing experts from the experts.json file.
+        
+        Args:
+            language (str): Programming language
+            
+        Returns:
+            dict: Dictionary of username -> expert data
+        """
+        experts_file = self.get_experts_file_path(language)
+        if not os.path.exists(experts_file):
+            return {}
+        
+        try:
+            with open(experts_file, "r", encoding="utf-8") as f:
+                experts_list = json.load(f)
+                # Convert to dictionary with username as key
+                return {expert["login"]: expert for expert in experts_list}
+        except Exception as e:
+            logger.error(f"Error reading existing experts file: {e}")
+            return {}
+    
+    def get_expert_comment_count(self, language: str, username: str) -> int:
+        """
+        Get the number of comments for an expert.
+        
+        Args:
+            language (str): Programming language
+            username (str): GitHub username
+            
+        Returns:
+            int: Number of comments, 0 if no comments or errors
+        """
+        comments_file = os.path.join(self.get_expert_dir(language, username), "comments.json")
+        if not os.path.exists(comments_file):
+            return 0
+        
+        try:
+            with open(comments_file, "r", encoding="utf-8") as f:
+                comments = json.load(f)
+                # Handle empty arrays as having no comments
+                if not comments:  # This checks if the array is empty
+                    logger.info(f"Comments file for {username} exists but is empty ([])")
+                    return 0
+                return len(comments)
+        except Exception as e:
+            logger.error(f"Error reading comments file for {username}: {e}")
+            return 0
         
     async def find_experts(self, language: str, max_experts: int = 10) -> List[Dict[str, Any]]:
         """
@@ -176,7 +230,7 @@ class GitHubDataPipeline:
         )
         
         # Save expert list in language directory
-        experts_file = os.path.join(self.get_language_dir(language), "experts.json")
+        experts_file = self.get_experts_file_path(language)
         with open(experts_file, "w", encoding="utf-8") as f:
             json.dump(experts, f, indent=2, ensure_ascii=False)
         
@@ -207,6 +261,8 @@ class GitHubDataPipeline:
         """
         logger.info(f"Collecting comments for {username}...")
         expert_dir = self.get_expert_dir(language, username)
+        
+        # Create directory only if we proceed with crawling
         os.makedirs(expert_dir, exist_ok=True)
         
         output_file = os.path.join(expert_dir, "comments.json")
@@ -224,6 +280,35 @@ class GitHubDataPipeline:
         
         if not comments:
             logger.warning(f"No comments found for {username}")
+            # Remove empty directory if no comments were found
+            try:
+                if os.path.exists(expert_dir):
+                    # Check if directory is empty (except for comments.json which might be empty)
+                    files = os.listdir(expert_dir)
+                    if len(files) <= 1 and (len(files) == 0 or "comments.json" in files):
+                        # Remove directory if empty or only contains empty comments.json
+                        os.remove(output_file) if os.path.exists(output_file) else None
+                        os.rmdir(expert_dir)
+                        logger.info(f"Removed empty expert directory for {username}")
+            except Exception as e:
+                logger.error(f"Error removing empty directory for {username}: {e}")
+            return None
+        
+        # Check if comments list is empty but not None
+        if isinstance(comments, list) and len(comments) == 0:
+            logger.warning(f"Empty comments list for {username}")
+            # Remove empty directory if empty comments list
+            try:
+                if os.path.exists(expert_dir):
+                    # Check if directory is empty (except for comments.json which contains empty array)
+                    files = os.listdir(expert_dir)
+                    if len(files) <= 1 and (len(files) == 0 or "comments.json" in files):
+                        # Remove directory if empty or only contains empty comments.json
+                        os.remove(output_file) if os.path.exists(output_file) else None
+                        os.rmdir(expert_dir)
+                        logger.info(f"Removed empty expert directory for {username} (empty array)")
+            except Exception as e:
+                logger.error(f"Error removing empty directory for {username}: {e}")
             return None
         
         logger.info(f"Collected {len(comments)} comments for {username}")
@@ -508,6 +593,10 @@ class GitHubDataPipeline:
             "failed_experts": []
         }
         
+        # Get existing experts
+        existing_experts = self.get_existing_experts(language)
+        logger.info(f"Found {len(existing_experts)} existing experts for {language}")
+        
         # Handle specific expert list
         expert_file = os.getenv("EXPERT_LIST_FILE")
         expert_usernames = []
@@ -537,14 +626,49 @@ class GitHubDataPipeline:
                 logger.error(f"Error reading expert list file: {e}")
         
         # Find experts if no specific list provided
+        new_experts_data = []
         if not expert_usernames:
-            experts = await self.find_experts(language, max_experts)
-            expert_usernames = [expert["login"] for expert in experts]
+            new_experts_data = await self.find_experts(language, max_experts)
+            new_expert_usernames = [expert["login"] for expert in new_experts_data]
+            expert_usernames = new_expert_usernames
         
-        logger.info(f"Processing {len(expert_usernames)} experts for {language}")
+            # Save merged expert list (new experts plus existing experts not in new list)
+            if new_experts_data:
+                merged_experts = new_experts_data.copy()
+                
+                # Add existing experts that aren't in the new list
+                new_expert_set = {expert["login"] for expert in new_experts_data}
+                for username, expert_data in existing_experts.items():
+                    if username not in new_expert_set:
+                        merged_experts.append(expert_data)
+                
+                # Save the merged list
+                experts_file = self.get_experts_file_path(language)
+                with open(experts_file, "w", encoding="utf-8") as f:
+                    json.dump(merged_experts, f, indent=2, ensure_ascii=False)
+        
+        # Combine new experts with existing ones that need recrawling
+        experts_to_process = set()
+        
+        # Process each expert in the desired order
+        for username in expert_usernames:
+            # Add newly discovered experts
+            experts_to_process.add(username)
+        
+        # Add existing experts with fewer comments than the limit
+        for username, expert_data in existing_experts.items():
+            # If the expert is not in our current list
+            if username not in expert_usernames:
+                # Check if they have fewer comments than the limit
+                comment_count = self.get_expert_comment_count(language, username)
+                if comment_count < comment_limit / 2:
+                    logger.info(f"Adding existing expert {username} for recrawl (has {comment_count}/{comment_limit} comments)")
+                    experts_to_process.add(username)
+        
+        logger.info(f"Processing {len(experts_to_process)} experts for {language}")
         
         # Process experts in a controlled parallel manner
-        for username in expert_usernames:
+        for username in experts_to_process:
             # Wait if we have reached the maximum number of concurrent tasks
             while len(self.active_tasks) >= self.max_concurrent_tasks:
                 # Wait for any task to complete
@@ -570,7 +694,7 @@ class GitHubDataPipeline:
             # Small delay to prevent hitting API rate limits
             await asyncio.sleep(0.5)
         
-        # Proper task tracking and completion waiting
+        # Wait for all tasks to complete (rest of the code remains the same)
         logger.info("Waiting for all tasks to complete...")
         
         # Wait for collection tasks to complete first
@@ -594,11 +718,6 @@ class GitHubDataPipeline:
             await asyncio.gather(*embedding_task_list, return_exceptions=True)
             # Short pause to allow tasks to update
             await asyncio.sleep(0.5)
-        
-        # Make sure all active tasks are done
-        # while self.active_tasks:
-        #     logger.info(f"Waiting for {len(self.active_tasks)} remaining active tasks to complete...")
-        #     await asyncio.sleep(2)  # Check every 2 seconds
         
         # Calculate duration
         end_time = datetime.now()
