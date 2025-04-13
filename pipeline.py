@@ -7,6 +7,19 @@ This script automates the entire process:
 2. Collect comments from those experts
 3. Enrich comments with classifications
 4. Create embeddings and import to Qdrant
+
+The data is organized in the following structure:
+data/
+  ├── javascript/
+  │   ├── experts.json
+  │   ├── pipeline_results.json
+  │   └── experts/
+  │       └── {expert_username}/
+  │           ├── comments.json
+  │           ├── comments.enriched.json
+  │           └── comments.json.state
+  └── python/
+      └── ...
 """
 
 import os
@@ -38,7 +51,7 @@ logger = logging.getLogger(__name__)
 class GitHubDataPipeline:
     """Pipeline for collecting and processing GitHub expert comments."""
     
-    def __init__(self, github_token: str = None, openai_key: str = None, 
+    def __init__(self, github_tokens: List[str] = None, openai_key: str = None, 
                  output_dir: str = None,
                  qdrant_url: str = None, qdrant_key: str = None,
                  openai_model: str = None, embedding_model: str = None):
@@ -46,7 +59,7 @@ class GitHubDataPipeline:
         Initialize the pipeline with keys from .env or parameters.
         
         Args:
-            github_token (str, optional): GitHub API token
+            github_tokens (list, optional): List of GitHub API tokens
             openai_key (str, optional): OpenAI API key
             output_dir (str): Directory to save data
             qdrant_url (str, optional): URL to Qdrant server
@@ -54,8 +67,27 @@ class GitHubDataPipeline:
             openai_model (str, optional): OpenAI model for comment enrichment
             embedding_model (str, optional): OpenAI model for embeddings
         """
-        # Load keys from .env or parameters with defaults
-        self.github_token = github_token or os.getenv("GITHUB_TOKEN")
+        # Load GitHub tokens from .env file if not provided
+        if github_tokens is None:
+            # Check for multiple tokens in env
+            github_tokens = []
+            
+            # Try GITHUB_TOKEN
+            main_token = os.getenv("GITHUB_TOKEN")
+            if main_token:
+                github_tokens.append(main_token)
+                
+            # Try GITHUB_TOKEN_1, GITHUB_TOKEN_2, GITHUB_TOKEN_3, etc.
+            for i in range(1, 10):  # Check up to 9 additional tokens
+                token_key = f"GITHUB_TOKEN_{i}"
+                token = os.getenv(token_key)
+                if token:
+                    github_tokens.append(token)
+        
+        # Store tokens
+        self.github_tokens = github_tokens if github_tokens else []
+        
+        # Load other settings from .env or parameters with defaults
         self.openai_key = openai_key or os.getenv("OPENAI_API_KEY")
         self.output_dir = output_dir or os.getenv("OUTPUT_DIR", "data")
         self.qdrant_url = qdrant_url or os.getenv("QDRANT_URL", "http://localhost:6333")
@@ -65,8 +97,8 @@ class GitHubDataPipeline:
         self.use_rest_api = os.getenv("USE_REST_API", "false").lower() == "true"
 
         # Validate required keys
-        if not self.github_token:
-            raise ValueError("GitHub token is required. Set in .env file as GITHUB_TOKEN.")
+        if not self.github_tokens:
+            raise ValueError("At least one GitHub token is required. Set in .env file as GITHUB_TOKEN or GITHUB_TOKEN_1, GITHUB_TOKEN_2, etc.")
         
         if not self.openai_key:
             raise ValueError("OpenAI API key is required. Set in .env file as OPENAI_API_KEY.")
@@ -74,9 +106,9 @@ class GitHubDataPipeline:
         # Create output directory if it doesn't exist
         os.makedirs(self.output_dir, exist_ok=True)
         
-        # Initialize components
-        self.expert_finder = GitHubExpertFinder(self.github_token)
-        self.comment_crawler = GitHubCommentCrawler(self.github_token)
+        # Initialize components with all tokens
+        self.expert_finder = GitHubExpertFinder(self.github_tokens)  # Pass all tokens to expert finder for rotation
+        self.comment_crawler = GitHubCommentCrawler(self.github_tokens)  # Comment crawler can use all tokens
         self.comment_enricher = CommentEnricher(
             api_key=self.openai_key,
             model=self.openai_model
@@ -102,6 +134,23 @@ class GitHubDataPipeline:
             "failed_experts": []
         }
         
+        # Current language being processed
+        self.current_language = None
+        
+    def get_language_dir(self, language: str) -> str:
+        """Get the directory path for a specific language."""
+        return os.path.join(self.output_dir, language.lower())
+        
+    def get_expert_dir(self, language: str, username: str) -> str:
+        """Get the directory path for a specific expert within a language."""
+        return os.path.join(self.get_language_dir(language), "experts", username)
+        
+    def setup_language_dirs(self, language: str) -> None:
+        """Create the directory structure for a language."""
+        language_dir = self.get_language_dir(language)
+        experts_dir = os.path.join(language_dir, "experts")
+        os.makedirs(experts_dir, exist_ok=True)
+        
     async def find_experts(self, language: str, max_experts: int = 10) -> List[Dict[str, Any]]:
         """
         Find experts for a given programming language.
@@ -115,6 +164,9 @@ class GitHubDataPipeline:
         """
         logger.info(f"Finding top {max_experts} {language} experts...")
         
+        # Setup directory structure for this language
+        self.setup_language_dirs(language)
+        
         # Run in a thread to avoid blocking the event loop
         experts = await asyncio.to_thread(
             self.expert_finder.find_experts,
@@ -123,8 +175,8 @@ class GitHubDataPipeline:
             use_rest_api=self.use_rest_api
         )
         
-        # Save expert list
-        experts_file = os.path.join(self.output_dir, f"{language}_experts.json")
+        # Save expert list in language directory
+        experts_file = os.path.join(self.get_language_dir(language), "experts.json")
         with open(experts_file, "w", encoding="utf-8") as f:
             json.dump(experts, f, indent=2, ensure_ascii=False)
         
@@ -133,11 +185,11 @@ class GitHubDataPipeline:
         for i, expert in enumerate(experts, 1):
             logger.info(f"{i}. {expert['login']}: Score={expert['score']} "
                         f"(Followers={expert['followers']}, Stars={expert['stars']}, "
-                        f"PRs={expert['prs']}, PR Reviews={expert['pr_reviews']})")
+                        f"PRs={expert['prs']}, PR Reviews={expert['pr_reviews']}")
         
         return experts
     
-    async def collect_comments(self, username: str, comment_limit: int = 200, 
+    async def collect_comments(self, username: str, language: str, comment_limit: int = 200, 
                                continue_crawl: bool = True,
                                get_all_historical: bool = False) -> Optional[List[Dict[str, Any]]]:
         """
@@ -145,6 +197,7 @@ class GitHubDataPipeline:
         
         Args:
             username (str): GitHub username
+            language (str): Programming language
             comment_limit (int): Maximum number of comments to collect
             continue_crawl (bool): Continue from previous crawl
             get_all_historical (bool): Get all historical comments
@@ -153,7 +206,10 @@ class GitHubDataPipeline:
             list: List of collected comments or None if no comments found
         """
         logger.info(f"Collecting comments for {username}...")
-        output_file = os.path.join(self.output_dir, f"{username}_comments.json")
+        expert_dir = self.get_expert_dir(language, username)
+        os.makedirs(expert_dir, exist_ok=True)
+        
+        output_file = os.path.join(expert_dir, "comments.json")
         
         # Run in a thread to avoid blocking the event loop
         comments = await asyncio.to_thread(
@@ -173,21 +229,23 @@ class GitHubDataPipeline:
         logger.info(f"Collected {len(comments)} comments for {username}")
         return comments
     
-    async def enrich_comments(self, username: str, 
+    async def enrich_comments(self, username: str, language: str,
                               continue_enrichment: bool = True) -> Optional[List[Dict[str, Any]]]:
         """
         Enrich comments with OpenAI classifications.
         
         Args:
             username (str): GitHub username
+            language (str): Programming language
             continue_enrichment (bool): Continue from previous enrichment
             
         Returns:
             list: List of enriched comments or None if input file not found
         """
         logger.info(f"Enriching comments for {username}...")
-        input_file = os.path.join(self.output_dir, f"{username}_comments.json")
-        output_file = os.path.join(self.output_dir, f"{username}_comments.enriched.json")
+        expert_dir = self.get_expert_dir(language, username)
+        input_file = os.path.join(expert_dir, "comments.json")
+        output_file = os.path.join(expert_dir, "comments.enriched.json")
         
         if not os.path.exists(input_file):
             logger.warning(f"Comment file for {username} not found")
@@ -204,19 +262,21 @@ class GitHubDataPipeline:
         logger.info(f"Enriched {len(enriched_comments)} comments for {username}")
         return enriched_comments
     
-    async def create_embeddings(self, username: str, collection_name: str) -> bool:
+    async def create_embeddings(self, username: str, language: str, collection_name: str) -> bool:
         """
         Create embeddings and import to Qdrant.
         
         Args:
             username (str): GitHub username
+            language (str): Programming language
             collection_name (str): Qdrant collection name
             
         Returns:
             bool: True if successful (at least some comments were embedded), False otherwise
         """
         logger.info(f"Creating embeddings for {username} and importing to Qdrant...")
-        input_file = os.path.join(self.output_dir, f"{username}_comments.enriched.json")
+        expert_dir = self.get_expert_dir(language, username)
+        input_file = os.path.join(expert_dir, "comments.enriched.json")
         
         if not os.path.exists(input_file):
             logger.warning(f"Enriched file for {username} not found")
@@ -233,71 +293,29 @@ class GitHubDataPipeline:
             return True
         except Exception as e:
             logger.error(f"Error creating embeddings for {username}: {e}")
-            # Even if there's an error, we consider it a partial success if some comments were processed
-            # Only return False if there was a catastrophic error
             return False
     
-    async def process_expert(self, username: str, comment_limit: int, collection_name: str,
-                            continue_crawl: bool = True, continue_enrichment: bool = True,
-                            get_all_historical: bool = False) -> bool:
-        """
-        Process a single expert (collect, enrich, embed).
-        
-        Args:
-            username (str): GitHub username
-            comment_limit (int): Maximum number of comments to collect
-            collection_name (str): Qdrant collection name
-            continue_crawl (bool): Continue from previous crawl
-            continue_enrichment (bool): Continue from previous enrichment
-            get_all_historical (bool): Get all historical comments
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        # Collect comments
-        comments = await self.collect_comments(
-            username=username,
-            comment_limit=comment_limit,
-            continue_crawl=continue_crawl,
-            get_all_historical=get_all_historical
-        )
-        
-        if not comments:
-            return False
-        
-        # Enrich comments
-        enriched = await self.enrich_comments(
-            username=username,
-            continue_enrichment=continue_enrichment
-        )
-        
-        if not enriched:
-            return False
-        
-        # Create embeddings and import to Qdrant
-        return await self.create_embeddings(
-            username=username,
-            collection_name=collection_name
-        )
-    
-    async def create_collection_task(self, username: str, comment_limit: int, collection_name: str,
-                                    continue_crawl: bool, continue_enrichment: bool, 
-                                    get_all_historical: bool) -> None:
+    async def create_collection_task(self, username: str, language: str, comment_limit: int, 
+                                    collection_name: str, continue_crawl: bool, 
+                                    continue_enrichment: bool, get_all_historical: bool) -> None:
         """
         Create a task for collecting comments and then start enrichment when done.
         
         Args:
             username (str): GitHub username
+            language (str): Programming language
             comment_limit (int): Maximum number of comments to collect
             collection_name (str): Qdrant collection name
             continue_crawl (bool): Continue from previous crawl
             continue_enrichment (bool): Continue from previous enrichment
             get_all_historical (bool): Get all historical comments
         """
+        comments = None
         try:
             # Collect comments
             comments = await self.collect_comments(
                 username=username,
+                language=language,
                 comment_limit=comment_limit,
                 continue_crawl=continue_crawl,
                 get_all_historical=get_all_historical
@@ -314,6 +332,7 @@ class GitHubDataPipeline:
             self.enrichment_tasks[username] = asyncio.create_task(
                 self.create_enrichment_task(
                     username=username,
+                    language=language,
                     collection_name=collection_name,
                     continue_enrichment=continue_enrichment
                 )
@@ -326,21 +345,27 @@ class GitHubDataPipeline:
             # Remove from active collection tasks
             if username in self.collection_tasks:
                 del self.collection_tasks[username]
+            # Ensure username is removed from active_tasks if no comments were found or an error occurred
+            if not comments:
+                self.active_tasks.discard(username)
     
-    async def create_enrichment_task(self, username: str, collection_name: str, 
-                                   continue_enrichment: bool) -> None:
+    async def create_enrichment_task(self, username: str, language: str,
+                                   collection_name: str, continue_enrichment: bool) -> None:
         """
         Create a task for enriching comments and then start embedding when done.
         
         Args:
             username (str): GitHub username
+            language (str): Programming language
             collection_name (str): Qdrant collection name
             continue_enrichment (bool): Continue from previous enrichment
         """
+        enriched = None
         try:
             # Enrich comments
             enriched = await self.enrich_comments(
                 username=username,
+                language=language,
                 continue_enrichment=continue_enrichment
             )
             
@@ -354,6 +379,7 @@ class GitHubDataPipeline:
             self.embedding_tasks[username] = asyncio.create_task(
                 self.create_embedding_task(
                     username=username,
+                    language=language,
                     collection_name=collection_name
                 )
             )
@@ -365,18 +391,23 @@ class GitHubDataPipeline:
             # Remove from active enrichment tasks
             if username in self.enrichment_tasks:
                 del self.enrichment_tasks[username]
+            # Ensure username is removed from active_tasks if no enriched comments or error
+            if not enriched:
+                self.active_tasks.discard(username)
     
-    async def create_embedding_task(self, username: str, collection_name: str) -> None:
+    async def create_embedding_task(self, username: str, language: str, collection_name: str) -> None:
         """
         Create a task for embedding comments and importing to Qdrant.
         
         Args:
             username (str): GitHub username
+            language (str): Programming language
             collection_name (str): Qdrant collection name
         """
         try:
             # Create embeddings and import to Qdrant
-            input_file = os.path.join(self.output_dir, f"{username}_comments.enriched.json")
+            expert_dir = self.get_expert_dir(language, username)
+            input_file = os.path.join(expert_dir, "comments.enriched.json")
             
             if not os.path.exists(input_file):
                 logger.warning(f"Enriched file for {username} not found")
@@ -417,7 +448,7 @@ class GitHubDataPipeline:
                 self.results["successful_experts"].append(username)
                 
                 # Count comments from the original comments file
-                comments_file = os.path.join(self.output_dir, f"{username}_comments.json")
+                comments_file = os.path.join(expert_dir, "comments.json")
                 if os.path.exists(comments_file):
                     try:
                         with open(comments_file, 'r', encoding='utf-8') as f:
@@ -452,6 +483,12 @@ class GitHubDataPipeline:
         language = os.getenv("LANGUAGE")
         if not language:
             raise ValueError("LANGUAGE must be defined in .env file")
+            
+        # Store current language
+        self.current_language = language.lower()
+        
+        # Setup directory structure for this language
+        self.setup_language_dirs(self.current_language)
             
         max_experts = int(os.getenv("MAX_EXPERTS", "10"))
         comment_limit = int(os.getenv("COMMENT_LIMIT", "200"))
@@ -520,6 +557,7 @@ class GitHubDataPipeline:
             collection_task = asyncio.create_task(
                 self.create_collection_task(
                     username=username,
+                    language=self.current_language,
                     comment_limit=comment_limit,
                     collection_name=collection_name,
                     continue_crawl=continue_crawl,
@@ -536,7 +574,7 @@ class GitHubDataPipeline:
         logger.info("Waiting for all tasks to complete...")
         
         # Wait for collection tasks to complete first
-        if self.collection_tasks:
+        while self.collection_tasks:
             collection_task_list = list(self.collection_tasks.values())
             logger.info(f"Waiting for {len(collection_task_list)} collection tasks to complete...")
             await asyncio.gather(*collection_task_list, return_exceptions=True)
@@ -558,9 +596,9 @@ class GitHubDataPipeline:
             await asyncio.sleep(0.5)
         
         # Make sure all active tasks are done
-        while self.active_tasks:
-            logger.info(f"Waiting for {len(self.active_tasks)} remaining active tasks to complete...")
-            await asyncio.sleep(2)  # Check every 2 seconds
+        # while self.active_tasks:
+        #     logger.info(f"Waiting for {len(self.active_tasks)} remaining active tasks to complete...")
+        #     await asyncio.sleep(2)  # Check every 2 seconds
         
         # Calculate duration
         end_time = datetime.now()
@@ -569,8 +607,8 @@ class GitHubDataPipeline:
         self.results["end_time"] = end_time.isoformat()
         self.results["duration_seconds"] = duration.total_seconds()
         
-        # Save results
-        results_file = os.path.join(self.output_dir, f"{language}_pipeline_results.json")
+        # Save results in language directory
+        results_file = os.path.join(self.get_language_dir(language), "pipeline_results.json")
         with open(results_file, "w", encoding="utf-8") as f:
             json.dump(self.results, f, indent=2, ensure_ascii=False)
         
@@ -591,6 +629,10 @@ async def main():
         # Initialize pipeline with settings from .env file
         pipeline = GitHubDataPipeline()
         
+        # Log the number of GitHub tokens available
+        token_count = len(pipeline.github_tokens)
+        logger.info(f"Running pipeline with {token_count} GitHub token{'s' if token_count > 1 else ''}")
+        
         # Run pipeline
         results = await pipeline.run_pipeline()
         
@@ -601,10 +643,10 @@ async def main():
         print(f"Total comments collected: {results['total_comments']}")
         print(f"Duration: {results['duration_seconds']/60:.2f} minutes")
         
-        # Fix the syntax error in this line
-        output_dir = os.getenv('OUTPUT_DIR', 'data')
-        results_file = f"{results['language']}_pipeline_results.json"
-        print(f"Results saved to: {os.path.join(output_dir, results_file)}")
+        # Results file is now in language directory
+        language_dir = os.path.join(os.getenv('OUTPUT_DIR', 'data'), results['language'].lower())
+        results_file = "pipeline_results.json"
+        print(f"Results saved to: {os.path.join(language_dir, results_file)}")
         
         return 0
     except ValueError as e:

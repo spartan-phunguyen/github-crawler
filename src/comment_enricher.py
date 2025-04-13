@@ -59,7 +59,6 @@ class CommentEnricher:
             with open(input_file, "r", encoding="utf-8") as f:
                 reviews = json.load(f)
                 
-            logger.info(f"Loaded {len(reviews)} comments from {input_file}")
         except Exception as e:
             logger.error(f"Error reading input file: {e}")
             return []
@@ -90,7 +89,7 @@ class CommentEnricher:
 You are a code‐review classifier. Given a single GitHub review comment object in JSON, produce a JSON object with exactly these three keys:
 
   • review_type: one of [
-      "naming_convention",
+      "naming convention",
       "architecture",
       "performance",
       "security",
@@ -102,6 +101,8 @@ You are a code‐review classifier. Given a single GitHub review comment object 
       "build",
       "refactor",
       "logic",
+      "code smell",
+      "bug",
       "other"
     ]
   • language: the primary programming language of the file (infer from file_path or diff_context)

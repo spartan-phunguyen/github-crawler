@@ -138,15 +138,29 @@ class CommentEmbedder:
             input_file (str): Path to JSON file with comments
             collection_name (str): Name of the Qdrant collection
         """
-        # Extract expert name from filename
+        # Extract expert name from the path based on our new directory structure
         input_path = Path(input_file)
-        filename = input_path.name
         expert_name = None
         
-        # Try to extract expert name from filename patterns like "ExpertName_comments.json"
-        if "_comments" in filename:
-            expert_name = filename.split("_comments")[0]
+        # Check for the new directory structure:
+        # data/{language}/experts/{expert_name}/comments.enriched.json
+        path_parts = input_path.parts
         
+        # Find "experts" in the path
+        if "experts" in path_parts:
+            experts_index = path_parts.index("experts")
+            # The expert name should be the part after "experts"
+            if len(path_parts) > experts_index + 1:
+                expert_name = path_parts[experts_index + 1]
+        
+        # Fallback to old method if expert name not found
+        if expert_name is None and "_comments" in input_path.name:
+            expert_name = input_path.name.split("_comments")[0]
+        
+        # If we still don't have an expert name, extract it from the parent directory name
+        if expert_name is None and input_path.parent.name != "data":
+            expert_name = input_path.parent.name
+            
         logger.info(f"Processing comments for expert: {expert_name or 'Unknown'}")
         
         # Load comments from file

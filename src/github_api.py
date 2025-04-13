@@ -65,6 +65,15 @@ class GitHubAPI:
                 return {}
                 
             return response.json()
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Network connection error: {e}")
+            return {"error": "connection_error"}
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Request timeout error: {e}")
+            return {"error": "timeout_error"}
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request error: {e}")
+            return {"error": "request_error"}
         except Exception as e:
             logger.error(f"Error executing GraphQL query: {e}")
-            return {} 
+            return {"error": "general_error"} 

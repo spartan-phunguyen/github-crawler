@@ -14,15 +14,46 @@ logger = logging.getLogger(__name__)
 class GitHubExpertFinder:
     """Class for finding and ranking GitHub experts by language."""
     
-    def __init__(self, token):
+    def __init__(self, github_tokens):
         """
-        Initialize with GitHub token.
+        Initialize with GitHub token(s).
         
         Args:
-            token (str): GitHub API token
+            github_tokens (str or list): A single GitHub token or a list of tokens
         """
-        self.api = GitHubAPI(token)
-        self.rest_finder = RestAPIExpertFinder(token)
+        # Handle both single token and list of tokens
+        if isinstance(github_tokens, str):
+            self.github_tokens = [github_tokens]
+        else:
+            self.github_tokens = github_tokens
+            
+        self.current_token_index = 0
+        self.api = GitHubAPI(self.github_tokens[0])
+        
+        # Initialize REST finder with first token
+        self.rest_finder = RestAPIExpertFinder(self.github_tokens[0])
+    
+    def rotate_token(self):
+        """
+        Rotate to the next available GitHub token.
+        
+        Returns:
+            bool: True if successfully rotated to a new token, False if all tokens are exhausted
+        """
+        if len(self.github_tokens) <= 1:
+            # Only one token available, can't rotate
+            return False
+            
+        # Move to next token
+        self.current_token_index = (self.current_token_index + 1) % len(self.github_tokens)
+        new_token = self.github_tokens[self.current_token_index]
+        
+        # Update API instances with new token
+        self.api = GitHubAPI(new_token)
+        self.rest_finder = RestAPIExpertFinder(new_token)
+        
+        logger.info(f"Rotated to GitHub token {self.current_token_index + 1}/{len(self.github_tokens)}")
+        return True
         
     def find_experts(self, language, max_users=30, use_rest_api=False):
         """
@@ -40,96 +71,156 @@ class GitHubExpertFinder:
         if use_rest_api:
             logger.info(f"Using REST API for finding {language} experts as requested")
             return self.rest_finder.find_experts(language, max_users)
+         
+        # Try GraphQL API with token rotation on rate limit or network errors
+        token_rotation_attempts = 0
+        max_token_rotations = len(self.github_tokens)   
             
-        try:
-            logger.info(f"Finding {language} experts using GraphQL...")
-            results = []
-            after_cursor = None
-            fetched = 0
-            
-            # GraphQL query to find users - using contributionsCollection for PR reviews
-            query = """
-            query($queryString: String!, $after: String) {
-              search(query: $queryString, type: USER, first: 10, after: $after) {
-                pageInfo {
-                  endCursor
-                  hasNextPage
-                }
-                edges {
-                  node {
-                    ... on User {
-                      login
-                      followers {
-                        totalCount
-                      }
-                      repositories(first: 50, isFork: false, ownerAffiliations: OWNER) {
-                        nodes {
-                          stargazerCount
-                          primaryLanguage {
-                            name
+        while token_rotation_attempts <= max_token_rotations:
+            try:
+                logger.info(f"Finding {language} experts using GraphQL...")
+                results = []
+                after_cursor = None
+                fetched = 0
+                
+                # GraphQL query to find users - using contributionsCollection for PR reviews
+                query = """
+                query($queryString: String!, $after: String) {
+                  search(query: $queryString, type: USER, first: 10, after: $after) {
+                    pageInfo {
+                      endCursor
+                      hasNextPage
+                    }
+                    edges {
+                      node {
+                        ... on User {
+                          login
+                          followers {
+                            totalCount
                           }
-                        }
-                      }
-                      pullRequests(first: 50) {
-                        totalCount
-                      }
-                      contributionsCollection {
-                        pullRequestReviewContributions {
-                          totalCount
+                          repositories(first: 50, isFork: false, ownerAffiliations: OWNER) {
+                            nodes {
+                              stargazerCount
+                              primaryLanguage {
+                                name
+                              }
+                            }
+                          }
+                          pullRequests(first: 50) {
+                            totalCount
+                          }
+                          contributionsCollection {
+                            pullRequestReviewContributions {
+                              totalCount
+                            }
+                          }
                         }
                       }
                     }
                   }
                 }
-              }
-            }
-            """
-            round = 0
-            while fetched < max_users:
-                print(f"Round {round}")
-                query_string = f"language:{language} followers:>1000 repos:>50"
-                variables = {"queryString": query_string, "after": after_cursor}
-                
-                data = self.api.graphql_query(query, variables)
-                if not data or 'data' not in data:
-                    logger.warning("No valid data received from API")
-                    break
+                """
+                round = 0
+                while fetched < max_users:
+                    print(f"Round {round}")
+                    #query_string = f"language:{language} followers:>1000 repos:>50"
+                    query_string = f"language:{language}"
+                    variables = {"queryString": query_string, "after": after_cursor}
                     
-                users = data['data']['search']['edges']
-                for user in users:
-                    if user['node'] == {}:
-                        continue
+                    data = self.api.graphql_query(query, variables)
+                    
+                    # Check for network errors and rotate token if needed
+                    if isinstance(data, dict) and "error" in data:
+                        error_type = data["error"]
+                        if error_type in ["connection_error", "timeout_error", "request_error", "general_error"]:
+                            logger.warning(f"Network error encountered: {error_type}. Attempting token rotation.")
+                            if self.rotate_token():
+                                logger.info(f"Rotated to token {self.current_token_index + 1}/{len(self.github_tokens)}")
+                                token_rotation_attempts += 1
+                                # Short wait before retrying
+                                import time
+                                time.sleep(2)
+                                continue
+                            else:
+                                logger.error("No more tokens available to rotate to")
+                                # Fall back to REST API as last resort
+                                logger.info("Falling back to REST API as last resort")
+                                return self.rest_finder.find_experts(language, max_users)
+                    
+                    if not data or 'data' not in data:
+                        logger.warning("No valid data received from API")
+                        # Try to rotate token and retry
+                        if self.rotate_token():
+                            logger.info(f"Rotated to token {self.current_token_index + 1}/{len(self.github_tokens)}")
+                            token_rotation_attempts += 1
+                            import time
+                            time.sleep(2)
+                            continue
+                        else:
+                            # Fall back to REST API if rotation fails
+                            logger.warning("Token rotation failed, falling back to REST API")
+                            return self.rest_finder.find_experts(language, max_users)
                         
-                    user_info = self._extract_user_data(user['node'], language)
-                    if user_info['score'] == 0:
-                        continue
-                    results.append(user_info)
+                    users = data['data']['search']['edges']
+                    for user in users:
+                        if user['node'] == {}:
+                            continue
+                            
+                        user_info = self._extract_user_data(user['node'], language)
+                        if user_info['score'] == 0:
+                            continue
+                        results.append(user_info)
 
-                    fetched += 1
-                    
-                    if fetched >= max_users:
+                        fetched += 1
+                        
+                        if fetched >= max_users:
+                            break
+                            
+                    # Check for next page
+                    if not data['data']['search']['pageInfo']['hasNextPage']:
                         break
                         
-                # Check for next page
-                if not data['data']['search']['pageInfo']['hasNextPage']:
-                    break
+                    after_cursor = data['data']['search']['pageInfo']['endCursor']
+                    round += 1
+                
+                # If we got here without exceptions, we're done
+                return sorted(results, key=lambda x: x['score'], reverse=True)
+            
+            except Exception as e:
+                # Check if the error is related to rate limiting
+                error_message = str(e).lower()
+                if "rate limit" in error_message or "ratelimit" in error_message or "too many requests" in error_message:
+                    logger.warning(f"GitHub API rate limited for token {self.current_token_index + 1}/{len(self.github_tokens)}")
                     
-                after_cursor = data['data']['search']['pageInfo']['endCursor']
-                round += 1
-            # Sort results by score
-            return sorted(results, key=lambda x: x['score'], reverse=True)
+                    # Try to rotate token
+                    if self.rotate_token():
+                        logger.info(f"Rotated to token {self.current_token_index + 1}/{len(self.github_tokens)}")
+                        token_rotation_attempts += 1
+                        continue
+                    else:
+                        logger.warning("No more tokens available to rotate to")
+                        # Fall back to REST API
+                        logger.info("Falling back to REST API due to rate limits")
+                        return self.rest_finder.find_experts(language, max_users)
+                else:
+                    # For network errors and other issues, also try to rotate token
+                    logger.error(f"Error finding experts via GraphQL: {e}")
+                    logger.info("Attempting to rotate token due to error")
+                    
+                    if self.rotate_token():
+                        logger.info(f"Rotated to token {self.current_token_index + 1}/{len(self.github_tokens)}")
+                        token_rotation_attempts += 1
+                        continue
+                    else:
+                        logger.warning("No more tokens available to rotate to")
+                        # Fall back to REST API
+                        logger.info("Falling back to REST API after all tokens failed")
+                        return self.rest_finder.find_experts(language, max_users)
         
-        except Exception as e:
-            # Check if the error is related to rate limiting
-            error_message = str(e).lower()
-            if "rate limit" in error_message or "ratelimit" in error_message or "too many requests" in error_message:
-                logger.warning(f"GraphQL API rate limited, falling back to REST API for finding {language} experts")
-                return self.rest_finder.find_experts(language, max_users)
-            else:
-                # For other errors, re-raise
-                logger.error(f"Error finding experts for {language}: {e}")
-                raise
-        
+        # If we exhausted all token rotations, fall back to REST API
+        logger.warning("All token rotation attempts exhausted, falling back to REST API")
+        return self.rest_finder.find_experts(language, max_users)
+    
     def _extract_user_data(self, node, target_language):
         """
         Extract and calculate score for a user.
@@ -184,8 +275,8 @@ if __name__ == "__main__":
                         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     
     parser = argparse.ArgumentParser(description="Find GitHub experts by programming language")
-    parser.add_argument("--token", type=str, help="GitHub API token", 
-                        default=os.environ.get("GITHUB_TOKEN"))
+    parser.add_argument("--tokens", type=str, nargs="+", help="GitHub API tokens (provide one or multiple)", 
+                        default=[os.environ.get("GITHUB_TOKEN")])
     parser.add_argument("--language", type=str, default="Python", 
                         help="Programming language to find experts for")
     parser.add_argument("--experts", type=int, default=10, 
@@ -197,8 +288,11 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    if not args.token:
-        logger.error("Missing GitHub token. Please provide via --token or GITHUB_TOKEN environment variable")
+    # Filter out None values if GITHUB_TOKEN environment variable not set
+    tokens = [token for token in args.tokens if token]
+    
+    if not tokens:
+        logger.error("Missing GitHub token. Please provide via --tokens or GITHUB_TOKEN environment variable")
         exit(1)
     
     # Create output directory if it doesn't exist
@@ -206,7 +300,7 @@ if __name__ == "__main__":
         os.makedirs(args.output_dir)
     
     # Find experts
-    finder = GitHubExpertFinder(args.token)
+    finder = GitHubExpertFinder(tokens)
     experts = finder.find_experts(
         language=args.language, 
         max_users=args.experts,

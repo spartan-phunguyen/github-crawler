@@ -1,5 +1,5 @@
 dotenv
-request
+requests
 tqdm
 openai
 qdrant-client

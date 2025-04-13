@@ -8,7 +8,9 @@ set -e  # Exit on error
 MAX_EXPERTS=10
 COMMENT_LIMIT=100
 ENV_FILE=".env"
-LANGUAGES=("Python" "JavaScript" "Rust" "Go" "TypeScript" "C#" "Ruby" "PHP" "Swift" "Kotlin" "Scala" "R" "SQL" "HTML" "CSS" "Java" "C++" "C" "Objective-C" "Ruby" "PHP" "Swift" "Kotlin" "Scala" "R" "SQL" "HTML" "CSS" "Java" "C++" "C" "Objective-C")
+LANGUAGES=("CSS")
+
+#"PHP" "Swift" "JavaScript" "Rust" "Go" "C#" "Ruby" "Kotlin" "Scala" "R" "SQL" "HTML" "CSS" "Java" "C++" "C"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -41,14 +43,13 @@ done
 update_env() {
   local key=$1
   local value=$2
-  
+
   # Check if key exists in the file
-  if grep -q "^$key=" "$ENV_FILE"; then
-    # Update existing key
-    sed -i "s/^$key=.*/$key=$value/" "$ENV_FILE"
+  if grep -q "^${key}=" "$ENV_FILE"; then
+    # macOS-compatible in-place edit
+    sed -i '' "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
   else
-    # Add new key
-    echo "$key=$value" >> "$ENV_FILE"
+    echo "${key}=${value}" >> "$ENV_FILE"
   fi
 }
 
@@ -66,12 +67,25 @@ for language in "${LANGUAGES[@]}"; do
   echo "Processing language: $language"
   echo "===================================================="
   
+  # Compute a filesystem‑safe, lowercase version of the language name
+  # e.g. "C#" -> "c_" , "C++" -> "c__"
+  safe_lang=$(echo "$language" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed 's/[^a-z0-9]/_/g')
+  expert_file="${safe_lang}_experts.json"
+  
   # Update .env file
   update_env "LANGUAGE" "$language"
   update_env "MAX_EXPERTS" "$MAX_EXPERTS"
   update_env "COMMENT_LIMIT" "$COMMENT_LIMIT"
+  update_env "EXPERT_LIST_FILE" "$expert_file"
   
-  echo "Updated .env file with LANGUAGE=$language, MAX_EXPERTS=$MAX_EXPERTS, COMMENT_LIMIT=$COMMENT_LIMIT"
+  echo "Updated .env file with:"
+  echo "  LANGUAGE=$language"
+  echo "  MAX_EXPERTS=$MAX_EXPERTS"
+  echo "  COMMENT_LIMIT=$COMMENT_LIMIT"
+  echo "  EXPERT_LIST_FILE=$expert_file"
+  echo ""
   
   # Run the pipeline
   echo "Starting pipeline for $language..."
@@ -86,4 +100,4 @@ done
 
 echo "===================================================="
 echo "Pipeline completed for all languages!"
-echo "====================================================" 
+echo "===================================================="

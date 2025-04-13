@@ -36,92 +36,139 @@ class RestAPICommentCrawler:
     def search_pull_requests(self, username, page=1, per_page=100):
         """Search for PRs where the user has commented."""
         url = f"https://api.github.com/search/issues?q=commenter:{username}+type:pr&page={page}&per_page={per_page}"
-        response = requests.get(url, headers=self.headers)
+        try:
+            response = requests.get(url, headers=self.headers)
 
-        if response.status_code == 403:
-            reset_time = int(response.headers.get("X-RateLimit-Reset", 0))
-            wait_time = max(0, reset_time - int(time.time()))
-            logging.warning(f"Rate limit exceeded. Waiting for {wait_time} seconds.")
-            time.sleep(wait_time + 1)
-            return self.search_pull_requests(username, page, per_page)
+            if response.status_code == 403:
+                reset_time = int(response.headers.get("X-RateLimit-Reset", 0))
+                wait_time = max(0, reset_time - int(time.time()))
+                logging.warning(f"Rate limit exceeded. Waiting for {wait_time} seconds.")
+                time.sleep(wait_time + 1)
+                return self.search_pull_requests(username, page, per_page)
 
-        if response.status_code != 200:
-            logging.error(f"Failed to search PRs: {response.status_code} - {response.text}")
-            return {"items": []}
+            if response.status_code != 200:
+                logging.error(f"Failed to search PRs: {response.status_code} - {response.text}")
+                return {"items": []}
 
-        return response.json()
+            return response.json()
+        except requests.exceptions.ConnectionError as e:
+            logging.error(f"Network connection error in search_pull_requests: {e}")
+            # Sleep briefly before returning to allow for retry
+            time.sleep(5)
+            return {"error": "connection_error", "items": []}
+        except requests.exceptions.Timeout as e:
+            logging.error(f"Request timeout error in search_pull_requests: {e}")
+            time.sleep(5)
+            return {"error": "timeout_error", "items": []}
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Request error in search_pull_requests: {e}")
+            time.sleep(2)
+            return {"error": "request_error", "items": []}
 
     def get_pr_comments(self, pr_url):
         """Get comments for a specific PR."""
-        # Get PR details
-        response = requests.get(pr_url, headers=self.headers)
+        try:
+            # Get PR details
+            response = requests.get(pr_url, headers=self.headers)
 
-        if response.status_code == 403:
-            reset_time = int(response.headers.get("X-RateLimit-Reset", 0))
-            wait_time = max(0, reset_time - int(time.time()))
-            logging.warning(f"Rate limit exceeded. Waiting for {wait_time} seconds.")
-            time.sleep(wait_time + 1)
-            return self.get_pr_comments(pr_url)
+            if response.status_code == 403:
+                reset_time = int(response.headers.get("X-RateLimit-Reset", 0))
+                wait_time = max(0, reset_time - int(time.time()))
+                logging.warning(f"Rate limit exceeded. Waiting for {wait_time} seconds.")
+                time.sleep(wait_time + 1)
+                return self.get_pr_comments(pr_url)
 
-        if response.status_code != 200:
-            logging.error(
-                f"Failed to get PR details: {response.status_code} - {response.text}"
-            )
-            return None
-
-        pr_data = response.json()
-
-        # Get PR review comments
-        comments_url = pr_data.get("review_comments_url")
-        if not comments_url:
-            comments_url = pr_data.get("_links", {}).get("review_comments", {}).get("href")
-            if not comments_url:
-                logging.error(f"Could not find review comments URL for PR {pr_url}")
+            if response.status_code != 200:
+                logging.error(
+                    f"Failed to get PR details: {response.status_code} - {response.text}"
+                )
                 return None
 
-        comments_response = requests.get(comments_url, headers=self.headers)
+            pr_data = response.json()
 
-        if comments_response.status_code == 403:
-            reset_time = int(comments_response.headers.get("X-RateLimit-Reset", 0))
-            wait_time = max(0, reset_time - int(time.time()))
-            logging.warning(f"Rate limit exceeded. Waiting for {wait_time} seconds.")
-            time.sleep(wait_time + 1)
-            return self.get_pr_comments(pr_url)
+            # Get PR review comments
+            comments_url = pr_data.get("review_comments_url")
+            if not comments_url:
+                comments_url = pr_data.get("_links", {}).get("review_comments", {}).get("href")
+                if not comments_url:
+                    logging.error(f"Could not find review comments URL for PR {pr_url}")
+                    return None
 
-        if comments_response.status_code != 200:
-            logging.error(
-                f"Failed to get PR comments: {comments_response.status_code} - {comments_response.text}"
-            )
+            try:
+                comments_response = requests.get(comments_url, headers=self.headers)
+
+                if comments_response.status_code == 403:
+                    reset_time = int(comments_response.headers.get("X-RateLimit-Reset", 0))
+                    wait_time = max(0, reset_time - int(time.time()))
+                    logging.warning(f"Rate limit exceeded. Waiting for {wait_time} seconds.")
+                    time.sleep(wait_time + 1)
+                    return self.get_pr_comments(pr_url)
+
+                if comments_response.status_code != 200:
+                    logging.error(
+                        f"Failed to get PR comments: {comments_response.status_code} - {comments_response.text}"
+                    )
+                    return None
+            except requests.exceptions.ConnectionError as e:
+                logging.error(f"Network connection error in get_pr_comments (comments): {e}")
+                return None
+            except requests.exceptions.Timeout as e:
+                logging.error(f"Request timeout error in get_pr_comments (comments): {e}")
+                return None
+            except requests.exceptions.RequestException as e:
+                logging.error(f"Request error in get_pr_comments (comments): {e}")
+                return None
+
+            # Get diff
+            diff_url = pr_data.get("diff_url")
+            try:
+                diff_response = requests.get(
+                    diff_url, headers={**self.headers, "Accept": "application/vnd.github.v3.diff"}
+                )
+
+                if diff_response.status_code == 403:
+                    reset_time = int(diff_response.headers.get("X-RateLimit-Reset", 0))
+                    wait_time = max(0, reset_time - int(time.time()))
+                    logging.warning(f"Rate limit exceeded. Waiting for {wait_time} seconds.")
+                    time.sleep(wait_time + 1)
+                    return self.get_pr_comments(pr_url)
+
+                if diff_response.status_code != 200:
+                    logging.error(
+                        f"Failed to get PR diff: {diff_response.status_code} - {diff_response.text}"
+                    )
+                    diff_content = "Could not retrieve diff"
+                else:
+                    diff_content = diff_response.text
+            except requests.exceptions.ConnectionError as e:
+                logging.error(f"Network connection error in get_pr_comments (diff): {e}")
+                diff_content = "Could not retrieve diff due to network error"
+            except requests.exceptions.Timeout as e:
+                logging.error(f"Request timeout error in get_pr_comments (diff): {e}")
+                diff_content = "Could not retrieve diff due to timeout"
+            except requests.exceptions.RequestException as e:
+                logging.error(f"Request error in get_pr_comments (diff): {e}")
+                diff_content = "Could not retrieve diff due to request error"
+
+            return {
+                "pr_number": pr_data.get("number"),
+                "pr_title": pr_data.get("title"),
+                "repo": pr_url.split("/repos/")[1].split("/pulls/")[0],
+                "comments": comments_response.json(),
+                "diff": diff_content,
+            }
+        except requests.exceptions.ConnectionError as e:
+            logging.error(f"Network connection error in get_pr_comments (main): {e}")
             return None
-
-        # Get diff
-        diff_url = pr_data.get("diff_url")
-        diff_response = requests.get(
-            diff_url, headers={**self.headers, "Accept": "application/vnd.github.v3.diff"}
-        )
-
-        if diff_response.status_code == 403:
-            reset_time = int(diff_response.headers.get("X-RateLimit-Reset", 0))
-            wait_time = max(0, reset_time - int(time.time()))
-            logging.warning(f"Rate limit exceeded. Waiting for {wait_time} seconds.")
-            time.sleep(wait_time + 1)
-            return self.get_pr_comments(pr_url)
-
-        if diff_response.status_code != 200:
-            logging.error(
-                f"Failed to get PR diff: {diff_response.status_code} - {diff_response.text}"
-            )
-            diff_content = "Could not retrieve diff"
-        else:
-            diff_content = diff_response.text
-
-        return {
-            "pr_number": pr_data.get("number"),
-            "pr_title": pr_data.get("title"),
-            "repo": pr_url.split("/repos/")[1].split("/pulls/")[0],
-            "comments": comments_response.json(),
-            "diff": diff_content,
-        }
+        except requests.exceptions.Timeout as e:
+            logging.error(f"Request timeout error in get_pr_comments (main): {e}")
+            return None
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Request error in get_pr_comments (main): {e}")
+            return None
+        except Exception as e:
+            logging.error(f"Error in get_pr_comments: {e}")
+            return None
 
     def get_comment_with_context(self, pr_data, username):
         """Extract comments with their context from PR data."""
@@ -214,12 +261,28 @@ class RestAPICommentCrawler:
         all_comments = []
         page = 1
         per_page = 100
+        consecutive_errors = 0
+        max_consecutive_errors = 3  # Max number of consecutive errors before giving up
 
         try:
             with tqdm(total=limit, desc=f"REST API: Collecting PR comments for {username}") as pbar:
                 while len(all_comments) < limit or get_all_historical:
                     # Search for PRs where the user has commented
                     search_results = self.search_pull_requests(username, page, per_page)
+                    
+                    # Check for network errors
+                    if "error" in search_results:
+                        consecutive_errors += 1
+                        if consecutive_errors >= max_consecutive_errors:
+                            logging.error(f"Too many consecutive errors ({consecutive_errors}). Aborting.")
+                            break
+                        logging.warning(f"Network error: {search_results['error']}. Retrying in 10 seconds... (Attempt {consecutive_errors}/{max_consecutive_errors})")
+                        time.sleep(10)  # Wait longer before retry
+                        continue
+                    
+                    # Reset error counter if successful
+                    consecutive_errors = 0
+                    
                     items = search_results.get("items", [])
 
                     if not items:
@@ -247,59 +310,76 @@ class RestAPICommentCrawler:
 
                         logging.info(f"Processing PR: {pr_url}")
 
-                        pr_data = self.get_pr_comments(pr_url)
+                        # Try to get PR comments with retry for network errors
+                        retry_count = 0
+                        max_retries = 3
+                        pr_data = None
+                        
+                        while retry_count < max_retries:
+                            pr_data = self.get_pr_comments(pr_url)
+                            if pr_data:  # If we got data, break the retry loop
+                                break
+                            
+                            retry_count += 1
+                            if retry_count < max_retries:
+                                logging.warning(f"Failed to get PR data, retrying in {retry_count * 5} seconds... ({retry_count}/{max_retries})")
+                                time.sleep(retry_count * 5)  # Exponential backoff
+                        
                         if not pr_data:
-                            logging.error(f"Could not retrieve data for PR: {pr_url}")
+                            logging.error(f"Failed to get data for PR {pr_url} after {max_retries} retries, skipping")
                             continue
 
+                        # Extract comments for this user
                         comments = self.get_comment_with_context(pr_data, username)
+                        if comments:
+                            all_comments.extend(comments)
+                            pbar.update(len(comments))
+                            logging.info(f"Found {len(comments)} comments in PR {pr_url}")
 
-                        for comment in comments:
-                            if self.is_valid_comment(comment["comment"]):
-                                all_comments.append(comment)
-                                if len(all_comments) <= limit:  # Only update progress for comments within limit
-                                    pbar.update(1)
-
-                        # Sleep to avoid hitting rate limits
-                        time.sleep(0.5)
-
-                    page += 1
-
-                    # If we've processed all available PRs, stop
-                    if len(items) < per_page:
+                    # Move to next page if we haven't collected enough comments yet
+                    if (len(all_comments) < limit or get_all_historical) and len(items) == per_page:
+                        page += 1
+                    else:
                         break
-                    
-                    # If we're not getting all historical comments and have reached the limit, break
-                    if len(all_comments) >= limit and not get_all_historical:
-                        break
+
+                    # Save progress after each page
+                    if output_file and all_comments:
+                        with open(output_file, 'w', encoding='utf-8') as f:
+                            json.dump(all_comments, f, ensure_ascii=False, indent=2)
+                        logging.info(f"Saved {len(all_comments)} comments to {output_file} (progress)")
+
+            logging.info(f"Finished collecting comments. Total: {len(all_comments)}")
 
         except Exception as e:
-            logging.error(f"An error occurred: {str(e)}")
+            logging.error(f"Error in collect_comments: {e}")
+            import traceback
+            traceback.print_exc()
+            # Save what we have so far
+            if output_file and all_comments:
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    json.dump(all_comments, f, ensure_ascii=False, indent=2)
+                logging.info(f"Saved {len(all_comments)} comments to {output_file} (after error)")
 
-        finally:
-            # Combine with existing comments if continue_crawl is True
-            if continue_crawl and existing_comments:
-                # Merge but avoid duplicates
-                seen_urls = {comment.get('comment_url') for comment in existing_comments}
-                new_comments = [c for c in all_comments if c.get('comment_url') not in seen_urls]
-                
-                all_comments = existing_comments + new_comments
-                logging.info(f"Combined {len(existing_comments)} existing and {len(new_comments)} new comments")
-            
-            # Save the collected data
-            if all_comments and output_file:
-                # Create directory if it doesn't exist
-                output_path = Path(output_file)
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                
-                with open(output_file, "w", encoding="utf-8") as f:
-                    json.dump(all_comments, f, indent=2, ensure_ascii=False)
+        # Merge with existing comments if continue_crawl is True
+        if continue_crawl and existing_comments:
+            # Use comment URLs for deduplication
+            existing_urls = {c.get('comment_url') for c in existing_comments if 'comment_url' in c}
+            new_comments = [c for c in all_comments if c.get('comment_url') not in existing_urls]
+            all_comments = existing_comments + new_comments
+            logging.info(f"Added {len(new_comments)} new comments to {len(existing_comments)} existing ones")
 
-                logging.info(f"Saved {len(all_comments)} comments to {output_file}")
-            elif not all_comments:
-                logging.warning("No comments were collected")
+        # Truncate to limit unless we want all historical comments
+        if not get_all_historical and len(all_comments) > limit:
+            all_comments = all_comments[:limit]
+            logging.info(f"Truncated to {limit} comments")
 
-            return all_comments
+        # Save final results
+        if output_file:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(all_comments, f, ensure_ascii=False, indent=2)
+            print(f"Comments saved to {output_file}")
+
+        return all_comments
 
     def is_valid_comment(self, comment_text):
         """
