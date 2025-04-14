@@ -42,8 +42,8 @@ The system follows a comprehensive data processing workflow:
 
 1. Clone this repository:
    ```
-   git clone https://github.com/yourusername/github-expert-finder.git
-   cd github-expert-finder
+   git clone git@github.com:spartan-phunguyen/github-crawler.git
+   cd github-crawler
    ```
 
 2. Create and activate a virtual environment:
@@ -164,8 +164,4 @@ If you encounter API rate limit errors:
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
 
