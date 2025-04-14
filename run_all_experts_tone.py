@@ -7,7 +7,7 @@ import json
 import shutil
 from dotenv import load_dotenv
 from datetime import datetime
-from tone_pipeline import ToneAnalysisPipeline
+from src.tone_pipeline import ToneAnalysisPipeline
 
 # Setup logging
 logging.basicConfig(

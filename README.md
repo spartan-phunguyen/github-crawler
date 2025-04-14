@@ -4,7 +4,7 @@ A sophisticated pipeline for identifying domain experts on GitHub based on their
 
 ## Overview
 
-GitHub Expert Finder is an automated system that builds a knowledge base of domain experts on GitHub by analyzing their activity, comments, and contributions. The pipeline collects comments from top GitHub users in specific programming languages, enriches them with AI-powered classifications, and makes them searchable through vector embeddings.
+GitHub Expert Finder is an automated system that builds a knowledge base of domain experts on GitHub by analyzing their activity, comments, and contributions. The pipeline collects comments from top GitHub users in specific programming languages, enriches them with AI-powered classifications and tone analysis, and makes them searchable through vector embeddings.
 
 ## Pipeline Architecture
 
@@ -13,8 +13,9 @@ The system follows a comprehensive data processing workflow:
 1. **Expert Identification**: Finds top GitHub users in a specific programming language based on followers, stars, PRs, and other metrics
 2. **Comment Collection**: Gathers issue and PR comments from identified experts
 3. **Comment Enrichment**: Uses OpenAI to classify and analyze comment content
-4. **Vector Embedding**: Creates searchable embeddings and stores them in Qdrant vector database
-5. **Parallel Processing**: Handles multiple experts concurrently with controlled task management
+4. **Tone Analysis**: Evaluates the tone and communication style of expert comments
+5. **Vector Embedding**: Creates searchable embeddings and stores them in Qdrant vector database
+6. **Parallel Processing**: Handles multiple experts concurrently with controlled task management
 
 ## Key Features
 
@@ -25,6 +26,7 @@ The system follows a comprehensive data processing workflow:
 - **Comprehensive Logging**: Detailed progress tracking and error handling
 - **Task Management**: Controls concurrency to avoid API rate limits
 - **Dual API Support**: Uses either GitHub's GraphQL API or REST API for data collection
+- **Tone Analysis**: Evaluates communication patterns and expertise indicators
 
 ## Key Advantages
 
@@ -34,6 +36,7 @@ The system follows a comprehensive data processing workflow:
 - **Rich Data Collection**: Gathers valuable knowledge and insights from top GitHub contributors
 - **AI-Enhanced Analysis**: Uses OpenAI to classify and enhance comment data
 - **Vector Search Capabilities**: Makes expert knowledge searchable via semantic embeddings
+- **Tone-Based Expert Profiling**: Identifies communication patterns and expertise indicators
 
 ## Installation
 
@@ -98,6 +101,23 @@ Available parameters:
 - `--comment-limit`: Maximum number of comments per expert (default: 100)
 - `--env-file`: Path to .env file (default: ".env")
 
+### Running Tone Analysis on Expert Comments
+
+After collecting expert comments, you can analyze their tone and communication style:
+
+```
+python run_all_experts_tone.py
+```
+
+Available parameters:
+
+- `--data-dir`: Base directory for data (default: 'data')
+- `--force`: Force reanalysis even if already done
+- `--days`: Reanalyze files older than this many days (default: 7)
+- `--model`: OpenAI model to use (default: gpt-4o-mini)
+- `--language`: Process only a specific language (e.g. 'python')
+- `--expert`: Process only a specific expert (must use with --language)
+
 ### Using Specific Expert Lists
 
 You can specify experts to process in two ways:
@@ -120,6 +140,7 @@ The pipeline uses several specialized components:
 2. **GitHubCommentCrawler**: Collects comments from GitHub users (supports both REST API and GraphQL)
 3. **CommentEnricher**: Uses OpenAI to analyze and classify comments
 4. **CommentEmbedder**: Creates vector embeddings and uploads to Qdrant
+5. **ToneAnalysisPipeline**: Analyzes expert communication patterns and expertise indicators
 
 ## Output
 
@@ -129,6 +150,7 @@ The pipeline generates several outputs in the data directory:
 - `{username}_comments.json`: Raw comments for each expert
 - `{username}_comments.enriched.json`: Enriched comments with classifications
 - `{language}_pipeline_results.json`: Pipeline execution summary
+- `tone_analysis/{language}/experts/{username}/*_tone_analysis.json`: Tone analysis results
 
 ## Troubleshooting
 

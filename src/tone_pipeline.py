@@ -1,9 +1,13 @@
 import os
+import sys
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+import os
 import json
 import logging
 import argparse
 from pathlib import Path
-from tone_analyzer import MapReduceToneAnalyzer
+from src.tone_analyzer import MapReduceToneAnalyzer
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, 
