@@ -130,20 +130,7 @@ class RestAPIExpertFinder:
         page = 1
         per_page = 30
         
-        with tqdm(total=max_users, desc=f"REST API: Finding {language} experts") as pbar:
-            while len(results) < max_users:
-                # Search for users
-                users = self.search_users(language, page, per_page)
-                
-                if not users:
-                    logger.info("No more users found.")
-                    break
-                
-                logger.info(f"Found {len(users)} users on page {page}")
-                
-                # Get detailed information for each user
-                for user in users:
-                    username = user.get("login")
+        
                     
                     # Skip users we've already processed
                     if any(result["login"] == username for result in results):
